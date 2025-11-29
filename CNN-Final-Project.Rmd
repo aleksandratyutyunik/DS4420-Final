@@ -1,6 +1,6 @@
 ---
 title: "CNN-Final-Project"
-author: "Liam Duncan"
+author: "Liam Duncan and Sasha Tyutyunik"
 date: "2025-11-28"
 output: html_document
 ---
@@ -9,22 +9,93 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+```{r}
+library(torch)
+library(torchvision)
+library(ggplot2)
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+df <- read.csv("data.csv")
+head(df)
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+# write a function that will display the image
+plot_img <- function(x, im_shape = c(6, 6)) {
+  # need to convert matrix to data frame for ggplot
+  df <- data.frame(expand.grid(x = 1:im_shape[2], y = 1:im_shape[1]),
+                   value = as.vector(t(x)))
+  
+  ggplot(df, aes(x, y, fill = value)) +
+    geom_tile() +
+    # can choose how to map the 0 and 1 (I'm copying cmap from python here)
+    scale_fill_gradient(low = "black", high = "white") +
+    theme_void() +
+    theme(aspect.ratio = 1) +
+    scale_y_reverse()
+}
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+X <- df[,!names(df) %in% c("language")]
+y <- df$language
+
+
+# Split the data
+set.seed(42)
+# An easy way to get some indices
+# about 75% training data
+train_indices <- sample(1:nrow(X), size = round(nrow(X)*.75), replace = F) 
+
+# split
+X_train <- as.matrix(X[train_indices, ])
+X_test <- as.matrix(X[-train_indices, ])
+y_train <- y[train_indices]
+y_test <- y[-train_indices]
+
+x_train <- X_train / 255
+x_test <- X_test / 255
+
+x_train <- torch_tensor(array(x_train, dim = c(dim(x_train)[1], 1, 128, 128)), dtype = torch_float())
+x_test <- torch_tensor(array(x_test, dim = c(dim(x_test)[1], 1, 128, 128)), dtype = torch_float())
+
+x_test
+```
+
+
+
+```{r}
+# images need to be transposed as all are sideways
+plot_img(t(as.matrix(x_test[nrow(x_test),1,,])), im_shape = c(128, 128))
+```
+
+```{r}
+cnn_model <- nn_module(
+  initialize = function() {
+    # the channels are both 1 because we have black and white images (single matrix for each image)
+    # this is the convolutional layer
+    # this implementation is much slower than keras, so I'm going to use a bigger kernel (7 by 7)
+    self$conv <- nn_conv2d(in_channels = 1, out_channels = 1, kernel_size = 3, stride = 1)
+    # pooling layer
+    self$pool <- nn_max_pool2d(kernel_size = 2)
+    # this is the hidden layer (I'm also speeding up things by making the network less wide)
+    self$hid <- nn_linear(in_features = 126 * 126, out_features = 15000) 
+    
+    # self$hid2 <- nn_linear(in_features = 250, out_features = 100)
+    # this is the output layer
+    self$out <- nn_linear(in_features = 15000, out_features = 1)
+  },
+  # we're just going to call the data x which will be passed through each layer:
+  forward = function(x) {
+    x <- self$conv(x)
+    x <- torch_flatten(x, start_dim = 2) # Flatten except for channel dimension
+    x <- self$hid(x)
+    x <- torch_relu(x)
+    #x <- self$hid2(x)
+    #x <- torch_tanh(x)
+    x <- self$out(x)
+    torch_sigmoid(x)
+  }
+)
+```
