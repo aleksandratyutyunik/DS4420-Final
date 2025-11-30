@@ -89,6 +89,7 @@ cnn_model <- nn_module(
   # we're just going to call the data x which will be passed through each layer:
   forward = function(x) {
     x <- self$conv(x)
+    x <- self$pool(x)
     x <- torch_flatten(x, start_dim = 2) # Flatten except for channel dimension
     x <- self$hid(x)
     x <- torch_relu(x)
