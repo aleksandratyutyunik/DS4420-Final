@@ -9,17 +9,17 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r library-install}
 library(torch)
 library(torchvision)
 library(ggplot2)
 
 df <- read.csv("data.csv")
-head(df)
+# head(df)
 ```
 
 
-```{r}
+```{r display-image}
 # write a function that will display the image
 plot_img <- function(x, im_shape = c(6, 6)) {
   # need to convert matrix to data frame for ggplot
@@ -37,7 +37,7 @@ plot_img <- function(x, im_shape = c(6, 6)) {
 ```
 
 
-```{r}
+```{r train-test-split}
 X <- df[,!names(df) %in% c("language")]
 y <- df$language
 
@@ -65,12 +65,12 @@ x_test
 
 
 
-```{r}
+```{r image-transpose}
 # images need to be transposed as all are sideways
 plot_img(t(as.matrix(x_test[nrow(x_test),1,,])), im_shape = c(128, 128))
 ```
 
-```{r}
+```{r cnn-model-train}
 cnn_model <- nn_module(
   initialize = function() {
     # the channels are both 1 because we have black and white images (single matrix for each image)
