@@ -104,13 +104,11 @@ cnn_model <- nn_module(
   initialize = function() {
     # this is the convolutional layer
     self$conv1 <- nn_conv2d(in_channels = 1, out_channels = 128, kernel_size = 5, stride = 1, padding=2)
-    #self$drop1 <- nn_dropout2d(p=.8)
     # pooling layer
     self$pool1 <- nn_max_pool2d(kernel_size = 2, stride=2)
     
     # this is the convolutional layer
     self$conv2 <- nn_conv2d(in_channels = 128, out_channels = 256, kernel_size = 5, stride = 1, padding=2)
-    #self$drop2 <- nn_dropout2d(p=.8)
     # pooling layer
     self$pool2 <- nn_max_pool2d(kernel_size = 2, stride=2)
     
@@ -124,17 +122,13 @@ cnn_model <- nn_module(
   # we're just going to call the data x which will be passed through each layer:
   forward = function(x) {
     x <- self$conv1(x)
-    #x <- self$drop1(x)
     x <- self$pool1(x)
     x <- self$conv2(x)
-    #x <- self$drop2(x)
     x <- self$pool2(x)
     x <- torch_flatten(x, start_dim = 2) # Flatten except for channel dimension
     x <- self$hid(x)
     x <- torch_relu(x)
     x <- self$drop3(x)
-    #x <- self$hid2(x)
-    #x <- torch_tanh(x)
     x <- self$out(x)
     torch_sigmoid(x)
   }
@@ -177,7 +171,6 @@ for (epoch in seq_len(epochs)) {
 
 ```{r}
 # Checking test set performance
-# Could be worse than the keras implementation because of all my "speed up" tricks above
 
 model$eval()
 with_no_grad({
