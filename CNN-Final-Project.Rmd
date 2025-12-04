@@ -35,6 +35,44 @@ plot_img <- function(x, im_shape = c(6, 6)) {
     theme(aspect.ratio = 1) +
     scale_y_reverse()
 }
+
+# convolution function (Simplified for square images/kernels only)
+convMat <- function(X, W) {
+  # get the dimensions of the kernel and input
+  k <- nrow(W)
+  p <- nrow(X)
+  
+  # calculate the dimensions of the output matrix
+  q <- p - k + 1
+  G <- matrix(0, nrow = q, ncol = q)
+  
+  # do the thing
+  for (m in 1:q) {
+    for (n in 1:q) {
+      submatrix <- X[m:(m+k-1), n:(n+k-1)]
+      G[m, n] <- sum(W * submatrix)
+    }
+  }
+  
+  return(G)
+}
+
+
+padding <- function(X, px) {
+  # get the dimensions of the kernel and input
+  p <- nrow(X)
+  
+  # add the top and bottom pads
+  pad1 <- matrix(0, nrow = px, ncol = p)
+  padX1 <- rbind(pad1, X, pad1)
+  
+  # add the left and right pads
+  pad2 <- matrix(0, nrow = nrow(padX1), ncol = px)
+  padX2 <- cbind(pad2, padX1, pad2)
+  
+  return(padX2)
+}
+
 ```
 
 
@@ -44,50 +82,53 @@ y_train <- df_train$language
 x_test <- df_test[,!names(df_test) %in% c("language")]
 y_test <- df_test$language
 
+y_train <- as.matrix(nestedcv::one_hot(y_train))
+y_test <- as.matrix(nestedcv::one_hot(y_test))
+
 x_train <- as.matrix(x_train) / 255
 x_test <- as.matrix(x_test) / 255
 
 
-x_train <- torch_tensor(array(x_train, dim = c(dim(x_train)[1], 1, 32, 32)), dtype = torch_float())
-x_test <- torch_tensor(array(x_test, dim = c(dim(x_test)[1], 1, 32, 32)), dtype = torch_float())
+x_train <- torch_tensor(array(x_train, dim = c(dim(x_train)[1], 1, 64, 64)), dtype = torch_float())
+x_test <- torch_tensor(array(x_test, dim = c(dim(x_test)[1], 1, 64, 64)), dtype = torch_float())
 ```
 
 
 ```{r image-transpose}
 # images need to be transposed as all are sideways
-plot_img(t(as.matrix(x_test[nrow(x_test),1,,])), im_shape = c(32, 32))
+plot_img(t(as.matrix(x_test[nrow(x_test),1,,])), im_shape = c(64, 64))
 ```
 
 ```{r cnn-model-train}
 cnn_model <- nn_module(
   initialize = function() {
-    # the channels are both 1 because we have black and white images (single matrix for each image)
     # this is the convolutional layer
-    self$conv1 <- nn_conv2d(in_channels = 32, out_channels = 64, kernel_size = 3, stride = 1, padding=1)
+    self$conv1 <- nn_conv2d(in_channels = 1, out_channels = 128, kernel_size = 5, stride = 1, padding=2)
     # pooling layer
-    self$pool1 <- nn_max_pool2d(kernel_size = 2)
-    # this is the convolutional layer
-    self$conv2 <- nn_conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, stride = 1)
-    # pooling layer
-    self$pool2 <- nn_max_pool2d(kernel_size = 2)
-    # this is the hidden layer (I'm also speeding up things by making the network less wide)
-    self$hid <- nn_linear(in_features = 4*4*128, out_features = 526) 
+    self$pool1 <- nn_max_pool2d(kernel_size = 2, stride=2)
     
-    # self$hid2 <- nn_linear(in_features = 250, out_features = 100)
+    # this is the convolutional layer
+    self$conv2 <- nn_conv2d(in_channels = 128, out_channels = 256, kernel_size = 5, stride = 1, padding=2)
+    # pooling layer
+    self$pool2 <- nn_max_pool2d(kernel_size = 2, stride=2)
+    
+    # this is the hidden layer
+    self$hid <- nn_linear(in_features = 16*16*256, out_features = 1024) 
+    self$drop3 <- nn_dropout(p=.8)
+    
     # this is the output layer
-    self$out <- nn_linear(in_features = 526, out_features = 1)
+    self$out <- nn_linear(in_features = 1024, out_features = 1)
   },
   # we're just going to call the data x which will be passed through each layer:
   forward = function(x) {
     x <- self$conv1(x)
     x <- self$pool1(x)
-     x <- self$conv2(x)
+    x <- self$conv2(x)
     x <- self$pool2(x)
     x <- torch_flatten(x, start_dim = 2) # Flatten except for channel dimension
     x <- self$hid(x)
     x <- torch_relu(x)
-    #x <- self$hid2(x)
-    #x <- torch_tanh(x)
+    x <- self$drop3(x)
     x <- self$out(x)
     torch_sigmoid(x)
   }
@@ -100,29 +141,16 @@ model <- cnn_model()
 
 # define the loss function and optimizer
 loss_fn <- nn_bce_loss() # Binary Cross-Entropy (log-loss equivalent)
-optimizer <- optim_sgd(model$parameters, lr = 0.2) #SGD (stochastic gradient descent)
+optimizer <- optim_sgd(model$parameters, lr = 0.0001) #SGD (stochastic gradient descent)
 
-epochs <- 10
+epochs <- 30
 n <- dim(x_train)[1]
-
-# loop through the epochs manually
-# (I think keras is a lot better here... I had to manually write out the updates that keras would)
-# another way to speed it up is to implement a batch size, though the larger the batch size, the worse the fit tends to be
-batch_size <- 32
 
 for (epoch in seq_len(epochs)) {
   model$train()
   epoch_loss <- 0
-  
-  #  for (i in seq_len(n)) { #if not using batch size (will take MUCH longer)
-  for (i in seq(1, n, by = batch_size)) {
-    start <- i # only if using batch_size, comment out to do full training set
-    end <- min(i + batch_size - 1, n) # only if using batch_size, comment out to do full training set
-    
-    # inputs <-x_train[i,,,drop = FALSE] #if not using batch size (will take MUCH longer)
-    # output <- y_6train[i, drop = FALSE] #if not using batch size (will take MUCH longer)
-    inputs <- x_train[start:end,,,]
-    output <- y_train[start:end]
+    inputs <- x_train
+    output <- y_train
     
     # forward pass
     preds <- model(inputs)
@@ -134,10 +162,39 @@ for (epoch in seq_len(epochs)) {
     optimizer$step()
     
     epoch_loss <- epoch_loss + loss$item()
-  }
   
-  # cat(sprintf("Epoch %d, Loss: %.4f\n", epoch, epoch_loss / n)) #if not using batch size (will take MUCH longer)
-  cat(sprintf("Epoch %d, Loss: %.4f\n", epoch, epoch_loss / (n / batch_size)))
+  cat(sprintf("Epoch %d, Loss: %.4f\n", epoch, epoch_loss / n)) 
 }
 ```
+
+
+
+```{r}
+# Checking test set performance
+
+model$eval()
+with_no_grad({
+  preds <- model(x_test)
+  loss <- loss_fn(preds, y_test)
+  accuracy <- mean(as.integer(preds) == as.integer(y_test))
+})
+
+cat('Test Loss:', loss$item(), '\n')
+cat('Test Accuracy:', accuracy, '\n')
+
+# Seems good, but check HOW it's good
+table(Predicted = as.integer(preds), Acutal = as.integer(y_test))
+
+conv_weights <- model$conv1$weight$detach()
+W <- as.matrix(conv_weights[1, 1, , ])
+W
+
+padded_X <- padding(as.matrix(x_test[nrow(x_test),1,,]), 2)
+
+G <- convMat(padded_X, W)
+
+plot_img(G, c(64, 64))
+```
+
+
 
